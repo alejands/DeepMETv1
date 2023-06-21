@@ -13,7 +13,7 @@ conda config --append envs_dirs /hildafs/projects/phy230010p/$USER/.conda/envs
 
 Install the necessary packages with [MiniConda](https://docs.conda.io/en/latest/miniconda.html)
 ```
-conda create -n METTraining python=3.7
+conda create -n METTraining python=3.11
 conda install -n METTraining numpy h5py
 conda install -n METTraining progressbar2
 conda install -n METTraining -c conda-forge uproot

@@ -109,6 +109,7 @@ def main():
                 if deltaR(eta, phi, lep[1], lep[2])<0.001 and abs(pt/lep[0]-1.0)<0.4:
                     # pfcand matched to the muon
                     # fill into XLep instead
+                    isLep = True
                     pf = XLep[e][ilep]
                     ilep += 1
                     Leptons.remove(lep)

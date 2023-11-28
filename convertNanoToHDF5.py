@@ -7,6 +7,11 @@ import h5py
 import progressbar
 import os
 
+# debug
+from time import time
+
+t0 = time()
+
 widgets=[
     progressbar.SimpleProgress(), ' - ', progressbar.Timer(), ' - ', progressbar.Bar(), ' - ', progressbar.AbsoluteETA()
 ]
@@ -62,11 +67,17 @@ if not opt.data:
     varList = varList + varList_mc
 varList = varList + varList_evt
 
+t1 = time()
+
 uptree = uproot.open(opt.input + ':Events')
 tree = uptree.arrays( varList )
 
+t2 = time()
+
+
 # general setup
-maxNPF = 4500
+#maxNPF = 4500
+maxNPF = 10
 nFeatures = 14
 
 maxEntries = len(tree['nPFCands']) if opt.maxevents==-1 else opt.maxevents
@@ -79,6 +90,7 @@ XLep = np.zeros(shape=(maxEntries, 2, nFeatures), dtype=float, order='F')
 # event-level information
 EVT = np.zeros(shape=(maxEntries,len(varList_evt)), dtype=float, order='F')
 
+t3 = time()
 print(X.shape)
 
 # loop over events
@@ -87,6 +99,7 @@ for e in progressbar.progressbar(range(maxEntries), widgets=widgets):
     for ilep in range(min(2, tree['nMuon'][e])):
         Leptons.append( (tree['Muon_pt'][e][ilep], tree['Muon_eta'][e][ilep], tree['Muon_phi'][e][ilep]) )
         
+    t4 = time()
     # get momenta
     ipf = 0
     ilep = 0
@@ -101,6 +114,7 @@ for e in progressbar.progressbar(range(maxEntries), widgets=widgets):
         phi = tree['PFCands_phi'][e][j]
        
         pf = X[e][ipf]
+        t5 = time()
 
         isLep = False
         for lep in Leptons:
@@ -113,6 +127,7 @@ for e in progressbar.progressbar(range(maxEntries), widgets=widgets):
                 break
         if not isLep:
             ipf += 1
+        t6 = time()
                  
         # 4-momentum
         pf[0] = pt
@@ -124,23 +139,40 @@ for e in progressbar.progressbar(range(maxEntries), widgets=widgets):
         pf[6] = tree['PFCands_dz'][e][j]
         pf[7] = tree['PFCands_puppiWeightNoLep'][e][j]
         pf[8] = tree['PFCands_mass'][e][j]
-        #pf[9] = tree[b'PF_hcalFraction'][e][j]
-        pf[9] = 0. # variable not found in input data, but also not used in training
-        pf[10] = tree['PFCands_puppiWeight'][e][j]
+        pf[9] = tree['PFCands_puppiWeight'][e][j]
         # encoding
-        pf[11] = d_encoding[b'PFCands_pdgId' ][float(tree['PFCands_pdgId' ][e][j])]
-        pf[12] = d_encoding[b'PFCands_charge'][float(tree['PFCands_charge'][e][j])]
-        pf[13] = d_encoding[b'PFCands_fromPV'][float(tree['PFCands_fromPV'][e][j])]
+        pf[10] = d_encoding[b'PFCands_pdgId' ][float(tree['PFCands_pdgId' ][e][j])]
+        pf[11] = d_encoding[b'PFCands_charge'][float(tree['PFCands_charge'][e][j])]
 
+        t7 = time()
+
+        print(t4-t3)
+        print(t5-t4)
+        print(t6-t5)
+        print(t7-t6)
+        print()
+        if j == 10:
+            sys.exit()
+
+    t5 = time()
     # truth info
     Y[e][0] += tree['GenMET_pt'][e] * np.cos(tree['GenMET_phi'][e])
     Y[e][1] += tree['GenMET_pt'][e] * np.sin(tree['GenMET_phi'][e])
 
-    EVT[e][0] = tree['fixedGridRhoFastjetAll'][e]
-    EVT[e][1] = tree['fixedGridRhoFastjetCentralCalo'][e]
+    EVT[e][0] = tree['Rho_fixedGridRhoFastjetAll'][e]
+    EVT[e][1] = tree['Rho_fixedGridRhoFastjetCentralCalo'][e]
     EVT[e][2] = tree['PV_npvs'][e]
     EVT[e][3] = tree['PV_npvsGood'][e]
     EVT[e][4] = tree['nMuon'][e]
+    t6 = time()
+
+    print(t1-t0)
+    print(t2-t1)
+    print(t3-t2)
+    print(t4-t3)
+    print(t5-t4)
+    print(t6-t5)
+    sys.exit()
 
 with h5py.File(opt.output, 'w') as h5f:
     h5f.create_dataset('X',    data=X,   compression='lzf')

@@ -5,7 +5,7 @@ dependencies:
   - numpy=1.26.2=py311h64a7726_0
   - h5py=3.10.0=nompi_py311h3839ddf_100
   - progressbar2=4.2.0=pyhd8ed1ab_0
-  - uproot=5.1.2=ha770c72_0
+  - coffea=0.7.22=pyhd8ed1ab_0
   - matplotlib=3.8.2=py311h38be061_0
   - pandas=2.1.3=py311h320fe9a_0
   - scikit-learn=1.3.2=py311hc009520_1

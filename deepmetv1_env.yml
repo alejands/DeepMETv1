@@ -5,7 +5,7 @@ dependencies:
   - numpy
   - h5py
   - progressbar2
-  - uproot
+  - coffea
   - matplotlib
   - pandas
   - scikit-learn

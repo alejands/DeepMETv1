@@ -1,0 +1,13 @@
+name: DeepMETv1
+channels:
+  - conda-forge
+dependencies:
+  - numpy
+  - h5py
+  - progressbar2
+  - uproot
+  - matplotlib
+  - pandas
+  - scikit-learn
+  - tensorflow-gpu
+  - keras

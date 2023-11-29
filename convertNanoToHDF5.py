@@ -1,158 +1,173 @@
-#!/usr/bin/env python3
+"""
+Gets DeepMETv1 training data from PFNano NanoAOD file and saves them to HDF5 output.
+
+Help Message
+------------
+usage: convertNanoToHDF5.py [-h] [-v] [-l <leptons>] [-p <npf>] [--auto_npf] [-f <fill>] <inputfile> <outputfile>
+
+positional arguments:
+  <inputfile>           input NanoAOD file.
+  <outputfile>          output HDF5 file
+
+options:
+  -h, --help            show this help message and exit
+  -v, --verbose         print logs
+  -l <leptons>, --leptons <leptons>
+                        number of leptons to remove from pfcands (default is 2)
+  -p <npf>, --npf <npf>
+                        max number of pfcands per event (default is 4500)
+  --auto_npf            determine npf based on input events max npf (overrides -p/--npf)
+  -f <fill>, --fill <fill>
+                        value used to pad and fill empty training data entries (default is -999)
+"""
+# Native libraries
 import sys
-import uproot
-import numpy as np
-import h5py
-import progressbar
-import os
+import logging
+import warnings
 import argparse
+# Third-party libraries
+import numpy as np
+import awkward as ak
+import h5py
+from coffea.nanoevents import NanoEventsFactory
+from coffea.nanoevents.schemas import NanoAODSchema
 
-### Options ###
+def get_args():
+    """Get command line arguments"""
+    parser = argparse.ArgumentParser()
+    parser.add_argument('inputfile', metavar='<inputfile>', type=str,
+        help='input NanoAOD file.')
+    parser.add_argument('outputfile', metavar='<outputfile>', type=str,
+        help='output HDF5 file')
+    parser.add_argument('-v', '--verbose', action='store_true',
+        help='print logs')
+    parser.add_argument('-l', '--leptons', metavar='<leptons>', type=int, default=2,
+        help='number of leptons to remove from pfcands (default is 2)')
+    parser.add_argument('-p', '--npf', metavar='<npf>', type=int, default=4500,
+        help='max number of pfcands per event (default is 4500)')
+    parser.add_argument('--auto_npf', action='store_true',
+        help='determine npf based on input events max npf (overrides -p/--npf)')
+    parser.add_argument('-f', '--fill', metavar='<fill>', type=float, default=-999,
+        help='value used to pad and fill empty training data entries (default is -999)')
+    return parser.parse_args()
 
-parser = argparse.ArgumentParser()
-parser.add_argument('-i', '--input', help='input NanoAOD file', metavar='<file>', required=True, type=str)
-parser.add_argument('-o', '--output', help='output HDF5 file', metavar='<file>', required=True, type=str)
-parser.add_argument('-n', '--nEvents', help='max number of events (default: -1)', metavar='<num>', default=-1, type=int)
-parser.add_argument('--data', help='input is data (default: MC)', action='store_true')
-args = parser.parse_args()
+def delta_phi(obj1, obj2):
+    """Returns deltaPhi between two objects in range [-pi,pi)"""
+    return (obj1.phi - obj2.phi + np.pi) % (2*np.pi) - np.pi
 
-### Variables saved ###
-
-varList = [
-    'nMuon', 'Muon_pt', 'Muon_eta', 'Muon_phi',
-    'nPFCands', 'PFCands_pt', 'PFCands_eta', 'PFCands_phi',
-    'PFCands_pdgId', 'PFCands_charge', 'PFCands_mass',
-    'PFCands_d0', 'PFCands_dz',
-    'PFCands_puppiWeightNoLep', 'PFCands_puppiWeight',
-]
-
-# Event-level variables
-varList_evt = [
-    'Rho_fixedGridRhoFastjetAll', 'Rho_fixedGridRhoFastjetCentralCalo',
-    'PV_npvs', 'PV_npvsGood', 'nMuon'
-]
-
-# MC-only variables
-varList_mc = [
-    'GenMET_pt', 'GenMET_phi',
-]
-
-if not args.data:
-    varList = varList + varList_mc
-varList = varList + varList_evt
-
-# Dictionaries for labeling discrete values
-d_encoding = {
-    b'PFCands_charge':{-1.0: 0, 0.0: 1, 1.0: 2},
-    b'PFCands_pdgId':{-211.0: 0, -13.0: 1, -11.0: 2, 0.0: 3, 1.0: 4, 2.0: 5, 11.0: 6, 13.0: 7, 22.0: 8, 130.0: 9, 211.0: 10},
-}
-
-### Functions ###
-
-def deltaR(eta1, phi1, eta2, phi2):
-    """ calculate deltaR """
-    dphi = (phi1-phi2)
-    while dphi >  np.pi: dphi -= 2*np.pi
-    while dphi < -np.pi: dphi += 2*np.pi
-    deta = eta1-eta2
+def delta_r(obj1, obj2):
+    """Returns deltaR between two objects"""
+    deta = obj1.eta - obj2.eta
+    dphi = delta_phi(obj1, obj2)
     return np.hypot(deta, dphi)
 
-### Main ###
+def px(obj):
+    """Returns object px"""
+    return obj.pt * np.cos(obj.phi)
+
+def py(obj):
+    """Returns object py"""
+    return obj.pt * np.sin(obj.phi)
+
+def remove_lepton(pfcands, lepton, r_max=0.001):
+    """
+    Remove deltaR matched lepton from pfcands. A lepton is matched to the
+    nearest pfcand if they are closer than a deltaR of r_max.
+    """
+    dr = delta_r(pfcands, lepton)
+    ipf = ak.local_index(dr)
+    imin = ak.argmin(dr, axis=-1)
+    # Match lepton to closest pfcand inside r_max cone
+    is_match = (ipf == imin) & (dr < r_max)
+    return pfcands[np.invert(is_match)]
 
 def main():
-    uptree = uproot.open(args.input + ':Events')
-    tree = uptree.arrays(varList)
-
-    # general setup
-    maxNPF = 4500
-    nFeatures = 14
-
-    maxEntries = len(tree['nPFCands']) if args.nEvents==-1 else args.nEvents
-    # input PF candidates
-    X = np.zeros(shape=(maxEntries,maxNPF,nFeatures), dtype=float, order='F')
-    # recoil estimators
-    Y = np.zeros(shape=(maxEntries,2), dtype=float, order='F')
-    # leptons
-    XLep = np.zeros(shape=(maxEntries, 2, nFeatures), dtype=float, order='F')
-    # event-level information
-    EVT = np.zeros(shape=(maxEntries,len(varList_evt)), dtype=float, order='F')
-
-    print(X.shape)
-
-    widgets=[
-        progressbar.SimpleProgress(),' - ',progressbar.Timer(),' - ',progressbar.Bar(),' - ',progressbar.AbsoluteETA()
+    """main"""
+    input_fields = [
+        'd0',
+        'dz',
+        'eta',
+        'mass',
+        'pt',
+        'puppiWeight',
+        'px',
+        'py',
+        'pdgId',
+        'charge',
+        #'fromPV',
     ]
+    output_fields = ['px', 'py']
+    args = get_args()
+    if args.verbose:
+        logging.basicConfig(format='%(levelname)s[%(asctime)s]:%(message)s',
+                            #datefmt='%Y-%m-%d %H:%M:%S',
+                            level=logging.INFO)
 
-    # loop over events
-    for e in progressbar.progressbar(range(maxEntries), widgets=widgets):
-        Leptons = []
-        for ilep in range(min(2, tree['nMuon'][e])):
-            Leptons.append( (tree['Muon_pt'][e][ilep], tree['Muon_eta'][e][ilep], tree['Muon_phi'][e][ilep]) )
+    logging.info('Fetching events')
+    events = NanoEventsFactory.from_root(
+        args.inputfile,
+        schemaclass=NanoAODSchema
+    ).events()
 
-        # get momenta
-        ipf = 0
-        ilep = 0
-        for j in range(tree['nPFCands'][e]):
-            if ipf == maxNPF:
-                break
+    logging.info(f'Num events before selection: {len(events)}')
+    n_lep = ak.num(events.Muon) + ak.num(events.Electron)
+    events = events[n_lep >= args.leptons]
+    logging.info(f'Num events after selection:  {len(events)}')
 
-            pt = tree['PFCands_pt'][e][j]
-            #if pt < 0.5:
-            #    continue
-            eta = tree['PFCands_eta'][e][j]
-            phi = tree['PFCands_phi'][e][j]
+    pfcands = events.PFCands
+    genMET = events.GenMET
+    leptons = ak.concatenate([events.Muon, events.Electron], axis=1)
+    leptons = leptons[ak.argsort(leptons.pt, axis=-1, ascending=False)]
+    leptons = leptons[:,:args.leptons]
 
-            pf = X[e][ipf]
+    logging.info('Removing leptons from pfcand list')
+    for ilep in range(args.leptons):
+        pfcands = remove_lepton(pfcands, leptons[:,ilep])
 
-            isLep = False
-            for lep in Leptons:
-                if deltaR(eta, phi, lep[1], lep[2])<0.001 and abs(pt/lep[0]-1.0)<0.4:
-                    # pfcand matched to the muon
-                    # fill into XLep instead
-                    isLep = True
-                    pf = XLep[e][ilep]
-                    ilep += 1
-                    Leptons.remove(lep)
-                    break
-            if not isLep:
-                ipf += 1
+    logging.info('Computing px and py')
+    pfcands['px'] = px(pfcands)
+    pfcands['py'] = py(pfcands)
+    genMET['px'] = px(genMET)
+    genMET['py'] = py(genMET)
 
-            # 4-momentum
-            pf[0] = pt
-            pf[1] = pt * np.cos(phi)
-            pf[2] = pt * np.sin(phi)
-            pf[3] = eta
-            pf[4] = phi
-            pf[5] = tree['PFCands_d0'][e][j]
-            pf[6] = tree['PFCands_dz'][e][j]
-            pf[7] = tree['PFCands_puppiWeightNoLep'][e][j]
-            pf[8] = tree['PFCands_mass'][e][j]
-            pf[9] = tree['PFCands_puppiWeight'][e][j]
-            # encoding
-            pf[10] = d_encoding[b'PFCands_pdgId' ][float(tree['PFCands_pdgId' ][e][j])]
-            pf[11] = d_encoding[b'PFCands_charge'][float(tree['PFCands_charge'][e][j])]
+    # Training input data
+    logging.info('Preparing training inputs')
+    X = []
+    pfcands_fields = ak.unzip(pfcands[input_fields])
+    npf = args.npf if not args.auto_npf else ak.max(ak.num(pfcands))
+    for i,field in enumerate(pfcands_fields):
+        logging.info(f'Processing PFCands_{input_fields[i]}')
+        field = ak.pad_none(field, npf, axis=-1, clip=True)
+        field = ak.fill_none(field, args.fill)
+        X.append(field)
+    X = np.array(X)
+    logging.info(f'Training inputs shape: {np.shape(X)}') # (nfields,nevents,npf)
 
-        # truth info
-        Y[e][0] += tree['GenMET_pt'][e] * np.cos(tree['GenMET_phi'][e])
-        Y[e][1] += tree['GenMET_pt'][e] * np.sin(tree['GenMET_phi'][e])
+    # Training output data
+    logging.info('Preparing training outputs')
+    genMET_fields = ak.unzip(genMET[output_fields])
+    Y = np.array(genMET_fields)
+    logging.info(f'Training outputs: {np.shape(Y)}') # (nfields,nevents)
 
-        EVT[e][0] = tree['Rho_fixedGridRhoFastjetAll'][e]
-        EVT[e][1] = tree['Rho_fixedGridRhoFastjetCentralCalo'][e]
-        EVT[e][2] = tree['PV_npvs'][e]
-        EVT[e][3] = tree['PV_npvsGood'][e]
-        EVT[e][4] = tree['nMuon'][e]
-
-    with h5py.File(args.output, 'w') as h5f:
+    with h5py.File(args.outputfile, 'w') as h5f:
         h5f.create_dataset('X',    data=X,    compression='lzf')
         h5f.create_dataset('Y',    data=Y,    compression='lzf')
-        h5f.create_dataset('EVT',  data=EVT,  compression='lzf')
-        h5f.create_dataset('XLep', data=XLep, compression='lzf')
 
-### Run Script ###
+    # Dictionaries to assign labels to discrete values
+    #d_encoding = {
+    #   b'PFCands_charge':{-1.0: 0, 0.0: 1, 1.0: 2},
+    #   b'PFCands_pdgId':{-211.0: 0, -13.0: 1, -11.0: 2, 0.0: 3,
+    #                      1.0: 4, 2.0: 5, 11.0: 6, 13.0: 7,
+    #                      22.0: 8, 130.0: 9, 211.0: 10},
+    #}
 
 if __name__ == '__main__':
     try:
+        # Suppress irrelevant warnings from coffea. Warnings have to do with
+        # the naming convention of some branches not relevant to DeepMET.
+        # The offending branches are 'Jet_*' and 'FatJet_*'.
+        warnings.filterwarnings('ignore',
+                                message='Found duplicate branch .*Jet_')
         main()
     except KeyboardInterrupt:
         sys.exit('\nStopping early.')
-

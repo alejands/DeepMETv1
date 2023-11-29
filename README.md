@@ -1,26 +1,35 @@
-## Some code used in DeepMET trainings
-(Code Taken from Jan Steggemann and Markus Seidel)
+## DeepMETv1
 
-First install the necessary packages with [MiniConda](https://docs.conda.io/en/latest/miniconda.html)
+DeepMETv1 is a fully-connected neural network (FCNN) for MET reconstruction in CMS data. This branch is focused on training on Run3 conditions.
+
+The [original repository](https://github.com/yongbinfeng/DeepMETTraining) by Yongbing Feng was used to train DeepMETv1 on Run2 conditions. A copy of this original code is in the branch [Run2](https://github.com/DeepMETv2/DeepMETv1/tree/Run2).
+
+---
+
+Install the necessary packages with [MiniConda](https://docs.conda.io/en/latest/miniconda.html). You can use the provided `environment.yml` file.
+
 ```
-conda create -n METTraining python=3.7
-conda install -n METTraining numpy h5py
-conda install -n METTraining progressbar2
-conda install -n METTraining uproot
-conda install -n METTraining matplotlib pandas scikit-learn
-conda install -n METTraining tensorflow-gpu=1.13.1 keras=2.2.4
+conda env create -y -f environment.yml
 ```
-and activate the environment
+
+Note: Using `environment.yml` is recommended, but a setup file with explicit package versions `explicit.yml` is also provided.
+
+Activate the environment
+
 ```
 conda activate METTraining
 ```
 
-Prepare the `h5` training files
+---
+
+Prepare the HDF5 training files
+
 ```
 python convertNanoToHDF5.py -i /eos/cms/store/user/yofeng/WRecoilNanoAOD_Skimmed_v10_tempMET_TTJets/myNanoProdMc2016_NANO_2_Skim.root -o /eos/cms/store/user/yofeng/DeepMETTrainingFile/myNanoProdMc2016_NANO_ttbar_2_Skim.h5
 ```
 
 Run the training
+
 ```
 python train_ptmiss_mine.py -i input.txt
 ```

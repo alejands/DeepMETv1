@@ -1,67 +1,98 @@
-#!/usr/bin/env python3
+'''
+convertNanoToHDF5.py
+This script converts PFNano NanoAOD files to HDF5 files to be used in training
+DeepMETv1.
+'''
 import sys
-import uproot
+import warnings
+import argparse
+from coffea.nanoevents import NanoEventsFactory
+from coffea.nanoevents.schemas import NanoAODSchema
 import numpy as np
 import h5py
 import progressbar
-import os
-import argparse
 
-### Options ###
-
-parser = argparse.ArgumentParser()
-parser.add_argument('-i', '--input', help='input NanoAOD file', metavar='<file>', required=True, type=str)
-parser.add_argument('-o', '--output', help='output HDF5 file', metavar='<file>', required=True, type=str)
-parser.add_argument('-n', '--nEvents', help='max number of events (default: -1)', metavar='<num>', default=-1, type=int)
-parser.add_argument('--data', help='input is data (default: MC)', action='store_true')
-args = parser.parse_args()
-
-### Variables saved ###
-
-varList = [
-    'nMuon', 'Muon_pt', 'Muon_eta', 'Muon_phi',
-    'nPFCands', 'PFCands_pt', 'PFCands_eta', 'PFCands_phi',
-    'PFCands_pdgId', 'PFCands_charge', 'PFCands_mass',
-    'PFCands_d0', 'PFCands_dz',
-    'PFCands_puppiWeightNoLep', 'PFCands_puppiWeight',
-]
-
-# Event-level variables
-varList_evt = [
-    'Rho_fixedGridRhoFastjetAll', 'Rho_fixedGridRhoFastjetCentralCalo',
-    'PV_npvs', 'PV_npvsGood', 'nMuon'
-]
-
-# MC-only variables
-varList_mc = [
-    'GenMET_pt', 'GenMET_phi',
-]
-
-if not args.data:
-    varList = varList + varList_mc
-varList = varList + varList_evt
-
-# Dictionaries for labeling discrete values
-d_encoding = {
-    b'PFCands_charge':{-1.0: 0, 0.0: 1, 1.0: 2},
-    b'PFCands_pdgId':{-211.0: 0, -13.0: 1, -11.0: 2, 0.0: 3, 1.0: 4, 2.0: 5, 11.0: 6, 13.0: 7, 22.0: 8, 130.0: 9, 211.0: 10},
-}
-
-### Functions ###
+def get_args():
+    """
+    Usage: convertNanoToHDF5.py [-h] -i <file> -o <file> [-n <num>] [--data]
+    """
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-i', '--input', help='Input NanoAOD file', metavar='<file>', required=True, type=str)
+    parser.add_argument('-o', '--output', help='Output HDF5 file', metavar='<file>', required=True, type=str)
+    parser.add_argument('-n', '--nEvents', help='Max events (default: -1)', metavar='<num>', default=-1, type=int)
+    parser.add_argument('--data', help='Input is data (default: MC)', action='store_true')
+    return parser.parse_args()
 
 def deltaR(eta1, phi1, eta2, phi2):
-    """ calculate deltaR """
+    """Calculate deltaR"""
     dphi = (phi1-phi2)
     while dphi >  np.pi: dphi -= 2*np.pi
     while dphi < -np.pi: dphi += 2*np.pi
     deta = eta1-eta2
     return np.hypot(deta, dphi)
 
-### Main ###
+# This function was copied over from DeepMETv2.
+# https://github.com/DeepMETv2/DeepMETv2/blob/master/data_dytt/generate_npz.py
+def run_deltar_matching(store,
+                        target,
+                        drname='deltaR',
+                        radius=0.4,
+                        unique=False,
+                        sort=False):
+    """
+    Running a delta R matching of some object collection "store" of dimension NxS
+    with some target collection "target" of dimension NxT, The return object will
+    have dimension NxSxT' where objects in the T' contain all "target" objects
+    within the delta R radius. The delta R between the store and target object will
+    be stored in the field `deltaR`. If the unique flag is turned on, then objects
+    in the target collection will only be associated to the closest object. If the
+    sort flag is turned on, then the target collection will be sorted according to
+    the computed `deltaR`.
+    """
+    _, target = ak.unzip(ak.cartesian([store.eta, target], nested=True))
+    target[drname] = delta_r(store, target)
+    if unique:  # Additional filtering
+        t_index = ak.argmin(target[drname], axis=-2)
+        s_index = ak.local_index(store.eta, axis=-1)
+        _, t_index = ak.unzip(ak.cartesian([s_index, t_index], nested=True))
+        target = target[s_index == t_index]
+
+    # Cutting on the computed delta R
+    target = target[target[drname] < radius]
+
+    # Sorting according to the computed delta R
+    if sort:
+        idx = ak.argsort(target[drname], axis=-1)
+        target = target[idx]
+    return target
+
 
 def main():
-    uptree = uproot.open(args.input + ':Events')
-    tree = uptree.arrays(varList)
+    args = get_args()
+    if args.data:
+        print('Processing data')
+    else:
+        print('Processing MC')
+
+    # Dictionaries to assign labels to discrete values
+    d_encoding = {
+       b'PFCands_charge':{-1.0: 0, 0.0: 1, 1.0: 2},
+       b'PFCands_pdgId':{-211.0: 0, -13.0: 1, -11.0: 2, 0.0: 3, 1.0: 4, 2.0: 5, 11.0: 6, 13.0: 7, 22.0: 8, 130.0: 9, 211.0: 10},
+    }
+
+    # Get events, but suppress irrelevant warnings from coffea
+    # Warnings have to do with the naming convention of some unused branches
+    warnings.filterwarnings('ignore', message='Found duplicate branch .*Jet_')
+    events = NanoEventsFactory.from_root(args.input, schemaclass=NanoAODSchema).events()
+
+    # Testing coffea and awkward
+    muons = events.Muon[:]
+    print("nEvents:", len(events))
+    import awkward as ak
+    nMuonMax = max(ak.num(muons, axis=1))
+    print("Max nMuons:", nMuonMax)
+
+    sys.exit('Debug') #########################################################
 
     # general setup
     maxNPF = 4500
@@ -76,11 +107,13 @@ def main():
     XLep = np.zeros(shape=(maxEntries, 2, nFeatures), dtype=float, order='F')
     # event-level information
     EVT = np.zeros(shape=(maxEntries,len(varList_evt)), dtype=float, order='F')
-
     print(X.shape)
 
     widgets=[
-        progressbar.SimpleProgress(),' - ',progressbar.Timer(),' - ',progressbar.Bar(),' - ',progressbar.AbsoluteETA()
+        progressbar.SimpleProgress(), ' - ',
+        progressbar.Timer(), ' - ',
+        progressbar.Bar(), ' - ',
+        progressbar.AbsoluteETA()
     ]
 
     # loop over events

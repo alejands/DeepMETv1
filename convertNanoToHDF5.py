@@ -109,25 +109,52 @@ def main():
     }
 
     events = NanoEventsFactory.from_root(args.input, schemaclass=NanoAODSchema).events()
-    selected_events = events[ak.num(events.Muon) >= 2]
+    events_selected = events[ak.num(events.Muon) >= 2]
+
+    '''
+    Testing coffea delta_r functionality
+    '''
 
     print('Running delta R matching')
-    # dimensions: n_events*npf*[muon if match else empty]
-    muon_matched_to_pfcand = run_deltar_matching(selected_events.PFCands,
-                                                 selected_events.Muon[:,:2],
-                                                 radius=0.001,
-                                                 unique=False,
-                                                 sort=False)
+    pf_cands = events_selected.PFCands
+    muons = events_selected.Muon[:,:2]
 
-    pf_not_matched_to_muon = ak.num(muon_matched_to_pfcand, axis=2)==0
-    print("nPFCands with muons:   ", ak.num(selected_events.PFCands))               # debug
-    selected_events['PFCands'] = selected_events.PFCands[pf_not_matched_to_muon]
-    print("nPFCands without muons:", ak.num(selected_events.PFCands))               # debug
+    ipf = ak.local_index(pf_cands, axis=1)
+    print(ipf)
+
+    dR_0 = muons[:,0].delta_r(pf_cands)
+    print('delta r:', dR_0)
+    min_dR1 = ak.argmin(dR_0, axis=1)
+    print('min dR idx:', min_dR1)
+    is_not_muon = (ipf!=min_dR1)
+    print('mask:', is_not_muon)
+
+    print(ak.num(pf_cands))
+    pf_cands = pf_cands[is_not_muon]
+    print(ak.num(pf_cands))
+
+    sys.exit('Debug') #########################################################
+
+    '''
+    Processing MC
+    Running delta R matching
+    [[0, 1, 2, 3, 4, 5, 6, 7, 8, ... 1854, 1855, 1856, 1857, 1858, 1859, 1860, 1861]]
+    delta r: [[3.14, 2.93, 1.79, 1.36, 1.24, 1.33, 1.86, ... 6.64, 6.93, 6.66, 6.84, 6.71, 6.76]]
+    min dR idx: [587, 1336, 414, 955, 818, 943, 1090, 1023, ... 760, 1026, 1069, 674, 1068, 579, 718]
+    mask: [[True, True, True, True, True, True, True, ... True, True, True, True, True, True]]
+    [1643, 2737, 1299, 2219, 1958, 2166, 2429, ... 2228, 2345, 1690, 2417, 1620, 1862]
+    [1642, 2736, 1298, 2218, 1957, 2165, 2428, ... 2227, 2344, 1689, 2416, 1619, 1861]
+    Debug
+    '''
+
+    dR_1 = muons[:,1].delta_r(pf_cands)
+    print(dR_1)
+    min_dR2 = ak.argmin(dR_1, axis=1)
+    print(min_dR2)
 
     # Are we using Muon[:2] or inverting PFCands selection for training target?
 
     sys.exit('Debug') #########################################################
-
 
     # general setup
     maxNPF = 4500

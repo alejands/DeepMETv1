@@ -1,35 +1,34 @@
-'''
+"""
 convertNanoToHDF5.py
+
+Usage: convertNanoToHDF5.py [-h] -i <file> -o <file> [-n <num>] [--data]
+
 This script converts PFNano NanoAOD files to HDF5 files to be used in training
 DeepMETv1.
-'''
+"""
 import sys
 import warnings
 import argparse
+import numpy as np
+import awkward as ak
+import h5py
 from coffea.nanoevents import NanoEventsFactory
 from coffea.nanoevents.schemas import NanoAODSchema
-import numpy as np
-import h5py
-import progressbar
 
 def get_args():
-    """
-    Usage: convertNanoToHDF5.py [-h] -i <file> -o <file> [-n <num>] [--data]
-    """
     parser = argparse.ArgumentParser()
     parser.add_argument('-i', '--input', help='Input NanoAOD file', metavar='<file>', required=True, type=str)
     parser.add_argument('-o', '--output', help='Output HDF5 file', metavar='<file>', required=True, type=str)
-    parser.add_argument('-n', '--nEvents', help='Max events (default: -1)', metavar='<num>', default=-1, type=int)
+    #parser.add_argument('-n', '--nevt', help='Max events (default: -1)', metavar='<num>', default=-1, type=int)
     parser.add_argument('--data', help='Input is data (default: MC)', action='store_true')
     return parser.parse_args()
 
-def deltaR(eta1, phi1, eta2, phi2):
-    """Calculate deltaR"""
-    dphi = (phi1-phi2)
-    while dphi >  np.pi: dphi -= 2*np.pi
-    while dphi < -np.pi: dphi += 2*np.pi
-    deta = eta1-eta2
-    return np.hypot(deta, dphi)
+def delta_phi(obj1, obj2):
+    return (obj1.phi - obj2.phi + np.pi) % (2 * np.pi) - np.pi
+
+def delta_r(obj1, obj2):
+#    return np.sqrt((obj1.eta - obj2.eta) ** 2 + delta_phi(obj1, obj2) ** 2)
+    return np.hypot(obj1.eta - obj2.eta, delta_phi(obj1, obj2))
 
 # This function was copied over from DeepMETv2.
 # https://github.com/DeepMETv2/DeepMETv2/blob/master/data_dytt/generate_npz.py
@@ -49,15 +48,35 @@ def run_deltar_matching(store,
     sort flag is turned on, then the target collection will be sorted according to
     the computed `deltaR`.
     """
+    # target = muon = n*[m1, m2]
+    # store = pf = n*[pf1,pf2,...,pf_npf]
+
+    # target = n*[[m1,m2],[m1,m2],...npf times...,[m1,m2]]
     _, target = ak.unzip(ak.cartesian([store.eta, target], nested=True))
+
+    # target.dR = n*[[p1m1,p1m2],[p2m1,p2m2],[p3m1,p3m2],...]]
     target[drname] = delta_r(store, target)
+
     if unique:  # Additional filtering
+
+        # t_idx = n*[ipf_min1, ipf_min2] for each muon, idx of closest pf
         t_index = ak.argmin(target[drname], axis=-2)
+
+        # s_idx = n*[ipf1, ipf2, ...] # list of pf indicies
         s_index = ak.local_index(store.eta, axis=-1)
+
+        # t_idx = n*[[imin1, imin2],...npf times...,[imin1,imin2]] # copies of "mu's closest pf"
         _, t_index = ak.unzip(ak.cartesian([s_index, t_index], nested=True))
+
+        # target = n*[[closest_mu_for_pf1],[closest_mu_for_pf2],...] # list of closest mu for each pf
         target = target[s_index == t_index]
 
     # Cutting on the computed delta R
+
+    # target(list of muons) = n*[[mu_close_pf1],[mu_close_pf2],...]
+    # for each pf, closest mu if it's inside the radius
+    # for each pf, [mu_close_pf] has 1 or 0 muons (if unique==True)
+    # only two pf idxs should be nonzero
     target = target[target[drname] < radius]
 
     # Sorting according to the computed delta R
@@ -66,8 +85,17 @@ def run_deltar_matching(store,
         target = target[idx]
     return target
 
-
 def main():
+    """
+    main() for convertNanoToHDF5.py.
+    Reads NanoAOD input file using coffea and handles input data with awkward  #
+    arrays. Events with at least two reconstructed muons are selected. The two
+    muons with the greatest pT are matched to the corresponding PF candidates
+    with the closest delta R. PF candidate information used for training is
+    saved, with muon PF candidates saved separately. The generator level MET
+    is saved to be used as the training target. The saved data is stored
+    in an output HDF5 file.
+    """
     args = get_args()
     if args.data:
         print('Processing data')
@@ -80,19 +108,26 @@ def main():
        b'PFCands_pdgId':{-211.0: 0, -13.0: 1, -11.0: 2, 0.0: 3, 1.0: 4, 2.0: 5, 11.0: 6, 13.0: 7, 22.0: 8, 130.0: 9, 211.0: 10},
     }
 
-    # Get events, but suppress irrelevant warnings from coffea
-    # Warnings have to do with the naming convention of some unused branches
-    warnings.filterwarnings('ignore', message='Found duplicate branch .*Jet_')
     events = NanoEventsFactory.from_root(args.input, schemaclass=NanoAODSchema).events()
+    selected_events = events[ak.num(events.Muon) >= 2]
 
-    # Testing coffea and awkward
-    muons = events.Muon[:]
-    print("nEvents:", len(events))
-    import awkward as ak
-    nMuonMax = max(ak.num(muons, axis=1))
-    print("Max nMuons:", nMuonMax)
+    print('Running delta R matching')
+    # dimensions: n_events*npf*[muon if match else empty]
+    muon_matched_to_pfcand = run_deltar_matching(selected_events.PFCands,
+                                                 selected_events.Muon[:,:2],
+                                                 radius=0.001,
+                                                 unique=False,
+                                                 sort=False)
+
+    pf_not_matched_to_muon = ak.num(muon_matched_to_pfcand, axis=2)==0
+    print("nPFCands with muons:   ", ak.num(selected_events.PFCands))               # debug
+    selected_events['PFCands'] = selected_events.PFCands[pf_not_matched_to_muon]
+    print("nPFCands without muons:", ak.num(selected_events.PFCands))               # debug
+
+    # Are we using Muon[:2] or inverting PFCands selection for training target?
 
     sys.exit('Debug') #########################################################
+
 
     # general setup
     maxNPF = 4500
@@ -181,11 +216,13 @@ def main():
         h5f.create_dataset('EVT',  data=EVT,  compression='lzf')
         h5f.create_dataset('XLep', data=XLep, compression='lzf')
 
-### Run Script ###
-
 if __name__ == '__main__':
     try:
-        main()
+        # Suppress irrelevant warnings from coffea. Warnings have to do with
+        # the naming convention of some branches not relevant to DeepMET.
+        # 'Jet_*' and 'FatJet_*'
+        with warnings.catch_warnings():
+            warnings.filterwarnings('ignore', message='Found duplicate branch .*Jet_')
+            main()
     except KeyboardInterrupt:
         sys.exit('\nStopping early.')
-

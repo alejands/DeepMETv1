@@ -78,17 +78,17 @@ def main():
 
     # inputs: d0, dz, eta, mass, pt, puppi, px, py, pdgId, charge, fromPV
     training_inputs = ak.concatenate([
-        [input_field(max_npf, pfcands.d0)]
-        [input_field(max_npf, pfcands.dz)]
-        [input_field(max_npf, pfcands.eta)]
-        [input_field(max_npf, pfcands.mass)]
-        [input_field(max_npf, pfcands.pt)]
-        [input_field(max_npf, pfcands.puppiWeight)]
-        [input_field(max_npf, pfcands.pt * np.cos(pfcands.phi))]
-        [input_field(max_npf, pfcands.pt * np.sin(pfcands.phi))]
-        [input_field(max_npf, pfcands.pdgId)]
-        [input_field(max_npf, pfcands.charge)]
-        [input_field(max_npf, pfcands.fromPV)]
+        [input_field(max_npf, pfcands.d0)],
+        [input_field(max_npf, pfcands.dz)],
+        [input_field(max_npf, pfcands.eta)],
+        [input_field(max_npf, pfcands.mass)],
+        [input_field(max_npf, pfcands.pt)],
+        [input_field(max_npf, pfcands.puppiWeight)],
+        [input_field(max_npf, pfcands.pt * np.cos(pfcands.phi))],
+        [input_field(max_npf, pfcands.pt * np.sin(pfcands.phi))],
+        [input_field(max_npf, pfcands.pdgId)],
+        [input_field(max_npf, pfcands.charge)],
+        [input_field(max_npf, pfcands.fromPV)],
     ])
 
     '''

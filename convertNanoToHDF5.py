@@ -22,42 +22,17 @@ def get_args():
     #parser.add_argument('--data', help='Input is data (default: MC)', action='store_true')
     return parser.parse_args()
 
-def remove_from_pf(pf_cands, muon, dR_max=0.001):
-    """
-    This is columnar operation over events.
+def delta_phi(obj1, obj2):
+    """Returns deltaPhi between two objects in range [-pi,pi)"""
+    return (obj1.phi - obj2.phi + np.pi) % (2*np.pi) - np.pi
 
-    Matches a muon to the nearest PF candidate in pf_cands and removes it from
-    the list. Returns a tuple with the filtered pf_cands and the matched muon
-    candidate pf_muon (empty if there is no match), respectively. The quantity
-    pf_muon.deltaR contains the distance to the matched muon.
-
-    If the distance to the nearest PF candidate is greater than dR_max, then no
-    PF candidate is removed, and pf_muon is an empty list.
-    """
-    dR = muon.delta_r(pf_cands)
-
-    dR_nearest = ak.min(dR, axis=1)
-    ipf_nearest = ak.argmin(dR, axis=1)
-    ipf = ak.local_index(pf_cands, axis=1)
-    pf_is_muon = (ipf_nearest == ipf) & (dR_nearest < dR_max)
-
-    pf_cands = pf_cands[np.invert(pf_is_muon)]
-    pf_muon = pf_cands[pf_is_muon]
-    pf_muon['deltaR'] = dR[pf_is_muon]
-    return pf_cands, pf_muon
+def delta_r(obj1, obj2):
+    """Returns deltaR between two objects"""
+    deta = obj1.eta - obj2.eta
+    dphi = delta_phi(obj1, obj2)
+    return np.hypot(deta, dphi)
 
 def main():
-    """
-    main() for convertNanoToHDF5.py.
-
-    Reads NanoAOD input file using coffea and handles input data with awkward
-    arrays. Events with at least two reconstructed muons are selected. The two
-    muons with the greatest pT are matched to the corresponding PF candidates
-    with the closest delta R. PF candidate information used for training is
-    saved, with muon PF candidates saved separately. The generator level MET
-    is saved to be used as the training target. The saved data is stored
-    in an output HDF5 file.
-    """
     args = get_args()
     print('Fetching events')
     events = NanoEventsFactory.from_root(
@@ -65,29 +40,33 @@ def main():
         schemaclass=NanoAODSchema
     ).events()
     print('Total events:', len(events))
+    n_leptons = ak.num(events.Muon) + ak.num(events.Electron)
+    events = events[n_leptons >= 2]
+    print('Num events after selection', len(events))
 
-    events['Lepton'] = ak.concatenate([events.Muon, events.Electron], axis=1)
-    events.Lepton = events.Lepton[ak.argsort(events.Lepton.pt ,axis=1, ascending=False)]
+    # Get pf cands and the two leading leptons
+    pfcands = events.PFCands
+    leptons = ak.concatenate([events.Muon, events.Electron], axis=1)
+    leptons = leptons[ak.argsort(leptons.pt, axis=-1, ascending=False)]
+    leptons = leptons[:,:2]
 
-    print('Requiring two leptons')
-    events = events[ak.num(events.Lepton) >= 2]
-    print('Num events:', len(events))
+    # PF candidate is flagged as lepton if deltaR to the nearest of the two
+    # leading leptons is < 0.001
+    pf_lep_pair = ak.cartesian([pfcands, leptons], nested=True)
+    pf, lep = ak.unzip(pf_lep_pair)
+    dr = delta_r(pf, lep)
+    is_lep = (ak.min(dr, axis=-1) < 0.001)
 
-    # New Lepton objects no longer have intrinsic delta_r function
+    #########################################
+    pf_leptons = pfcands[is_lep]
+    pfcands = pfcands[np.invert(is_lep)]
 
-    sys.exit('Debug') #########################################################
-
-    print('Matching leading two leptons to PFCands')
-    events.PFCands, events['LepPF0'] = remove_from_pf(events.PFCands, events.Lepton[:,0])
-    events.PFCands, events['LepPF1'] = remove_from_pf(events.PFCands, events.Lepton[:,1])
-
-    print('Requiring leading two leptons to be PF matched')
-    #events = events[(ak.num(pf_lep_0)!=0) & (ak.num(pf_lep_1)!=0)]
-    events = events[ak.num(events.LepPF0)!=0 & ak.num(events.LepPF1)!=0]
-    print('Num events:', len(events))
+    print(len(events[ak.num(pf_leptons)< 2]))
+    print(len(events[ak.num(pf_leptons)==2]))
+    print(len(events[ak.num(pf_leptons)> 2]))
+    sys.exit('weeee')
 
     # Are we using Muon[:2] or inverting PFCands selection for training target?
-
 
     '''
             # 4-momentum

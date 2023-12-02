@@ -19,7 +19,6 @@ def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('-i', '--input', help='Input NanoAOD file', metavar='<file>', required=True, type=str)
     parser.add_argument('-o', '--output', help='Output HDF5 file', metavar='<file>', required=True, type=str)
-    #parser.add_argument('--data', help='Input is data (default: MC)', action='store_true')
     return parser.parse_args()
 
 def delta_phi(obj1, obj2):
@@ -32,6 +31,13 @@ def delta_r(obj1, obj2):
     dphi = delta_phi(obj1, obj2)
     return np.hypot(deta, dphi)
 
+def input_field(n_obj, field, value=0):
+    """
+    Converts field from a ragged array to a regular array to be saved as input
+    for training.
+    """
+    return ak.fill_none(ak.pad_none(field, n_obj, clip=True), max_entries)
+
 def main():
     args = get_args()
     print('Fetching events')
@@ -39,10 +45,10 @@ def main():
         args.input,
         schemaclass=NanoAODSchema
     ).events()
-    print('Total events:', len(events))
+    print('Num events before selection:', len(events))
     n_leptons = ak.num(events.Muon) + ak.num(events.Electron)
     events = events[n_leptons >= 2]
-    print('Num events after selection', len(events))
+    print('Num events after selection: ', len(events))
 
     # Get pf cands and the two leading leptons
     pfcands = events.PFCands
@@ -50,49 +56,51 @@ def main():
     leptons = leptons[ak.argsort(leptons.pt, axis=-1, ascending=False)]
     leptons = leptons[:,:2]
 
-    # PF candidate is flagged as lepton if deltaR to the nearest of the two
-    # leading leptons is < 0.001
-    pf_lep_pair = ak.cartesian([pfcands, leptons], nested=True)
-    pf, lep = ak.unzip(pf_lep_pair)
+    # Compute delta R between each PF candidate and each lepton
+    pf, lep = ak.unzip(ak.cartesian([pfcands, leptons], nested=True))
     dr = delta_r(pf, lep)
-    is_lep = (ak.min(dr, axis=-1) < 0.001)
 
-    #########################################
-    pf_leptons = pfcands[is_lep]
-    pfcands = pfcands[np.invert(is_lep)]
+    # Get PF candidates that are closest to a lepton (one per lepton)
+    ipf = ak.local_index(pf, axis=1)
+    ipf_closest = ak.argmin(dr, axis=1)
+    ipf, ipf_closest = ak.unzip(ak.cartesian([ipf, ipf_closest], nested=True))
+    is_closest = ak.any(ipf==ipf_closest, axis=2)
+    # Cut on min delta R
+    in_cone = (ak.min(dr, axis=2) < 0.001)
 
-    print(len(events[ak.num(pf_leptons)< 2]))
-    print(len(events[ak.num(pf_leptons)==2]))
-    print(len(events[ak.num(pf_leptons)> 2]))
-    sys.exit('weeee')
+    # Remove closest lepton match from PF candidates
+    pfcands = pfcands[np.invert(is_closest & in_cone)]
 
-    # Are we using Muon[:2] or inverting PFCands selection for training target?
+    sys.exit('DEBUG')
+
+    #max_npf = ak.max(ak.num(pfcands))  # Value used in DeepMETv2 inputs
+    max_npf = 4500                      # Value used in DeepMETv1 Run2 training
+
+    # inputs: d0, dz, eta, mass, pt, puppi, px, py, pdgId, charge, fromPV
+    training_inputs = ak.concatenate([
+        [input_field(max_npf, pfcands.d0)]
+        [input_field(max_npf, pfcands.dz)]
+        [input_field(max_npf, pfcands.eta)]
+        [input_field(max_npf, pfcands.mass)]
+        [input_field(max_npf, pfcands.pt)]
+        [input_field(max_npf, pfcands.puppiWeight)]
+        [input_field(max_npf, pfcands.pt * np.cos(pfcands.phi))]
+        [input_field(max_npf, pfcands.pt * np.sin(pfcands.phi))]
+        [input_field(max_npf, pfcands.pdgId)]
+        [input_field(max_npf, pfcands.charge)]
+        [input_field(max_npf, pfcands.fromPV)]
+    ])
 
     '''
-            # 4-momentum
-            pf[0] = pt
-            pf[1] = pt * np.cos(phi)
-            pf[2] = pt * np.sin(phi)
-            pf[3] = eta
-            pf[4] = phi
-            pf[5] = tree['PFCands_d0'][e][j]
-            pf[6] = tree['PFCands_dz'][e][j]
-            pf[7] = tree['PFCands_puppiWeightNoLep'][e][j]
-            pf[8] = tree['PFCands_mass'][e][j]
-            pf[9] = tree['PFCands_puppiWeight'][e][j]
-            # encoding
-            pf[10] = d_encoding[b'PFCands_pdgId' ][float(tree['PFCands_pdgId' ][e][j])]
-            pf[11] = d_encoding[b'PFCands_charge'][float(tree['PFCands_charge'][e][j])]
+    # Dictionaries to assign labels to discrete values
+    d_encoding = {
+       b'PFCands_charge':{-1.0: 0, 0.0: 1, 1.0: 2},
+       b'PFCands_pdgId':{-211.0: 0, -13.0: 1, -11.0: 2, 0.0: 3, 1.0: 4, 2.0: 5, 11.0: 6, 13.0: 7, 22.0: 8, 130.0: 9, 211.0: 10},
+    }
 
         # truth info
         Y[e][0] += tree['GenMET_pt'][e] * np.cos(tree['GenMET_phi'][e])
         Y[e][1] += tree['GenMET_pt'][e] * np.sin(tree['GenMET_phi'][e])
-
-        EVT[e][0] = tree['Rho_fixedGridRhoFastjetAll'][e]
-        EVT[e][1] = tree['Rho_fixedGridRhoFastjetCentralCalo'][e]
-        EVT[e][2] = tree['PV_npvs'][e]
-        EVT[e][3] = tree['PV_npvsGood'][e]
-        EVT[e][4] = tree['nMuon'][e]
 
     with h5py.File(args.output, 'w') as h5f:
         h5f.create_dataset('X',    data=X,    compression='lzf')
@@ -111,67 +119,3 @@ if __name__ == '__main__':
             main()
     except KeyboardInterrupt:
         sys.exit('\nStopping early.')
-'''
-    # Dictionaries to assign labels to discrete values
-    d_encoding = {
-       b'PFCands_charge':{-1.0: 0, 0.0: 1, 1.0: 2},
-       b'PFCands_pdgId':{-211.0: 0, -13.0: 1, -11.0: 2, 0.0: 3, 1.0: 4, 2.0: 5, 11.0: 6, 13.0: 7, 22.0: 8, 130.0: 9, 211.0: 10},
-    }
-
-    # general setup
-    maxNPF = 4500
-    nFeatures = 14
-
-    maxEntries = len(tree['nPFCands']) if args.nEvents==-1 else args.nEvents
-    # input PF candidates
-    X = np.zeros(shape=(maxEntries,maxNPF,nFeatures), dtype=float, order='F')
-    # recoil estimators
-    Y = np.zeros(shape=(maxEntries,2), dtype=float, order='F')
-    # leptons
-    XLep = np.zeros(shape=(maxEntries, 2, nFeatures), dtype=float, order='F')
-    # event-level information
-    EVT = np.zeros(shape=(maxEntries,len(varList_evt)), dtype=float, order='F')
-    print(X.shape)
-
-    widgets=[
-        progressbar.SimpleProgress(), ' - ',
-        progressbar.Timer(), ' - ',
-        progressbar.Bar(), ' - ',
-        progressbar.AbsoluteETA()
-    ]
-
-    # loop over events
-    for e in progressbar.progressbar(range(maxEntries), widgets=widgets):
-        Leptons = []
-        for ilep in range(min(2, tree['nMuon'][e])):
-            Leptons.append( (tree['Muon_pt'][e][ilep], tree['Muon_eta'][e][ilep], tree['Muon_phi'][e][ilep]) )
-
-        # get momenta
-        ipf = 0
-        ilep = 0
-        for j in range(tree['nPFCands'][e]):
-            if ipf == maxNPF:
-                break
-
-            pt = tree['PFCands_pt'][e][j]
-            #if pt < 0.5:
-            #    continue
-            eta = tree['PFCands_eta'][e][j]
-            phi = tree['PFCands_phi'][e][j]
-
-            pf = X[e][ipf]
-
-            isLep = False
-            for lep in Leptons:
-                if deltaR(eta, phi, lep[1], lep[2])<0.001 and abs(pt/lep[0]-1.0)<0.4:
-                    # pfcand matched to the muon
-                    # fill into XLep instead
-                    isLep = True
-                    pf = XLep[e][ilep]
-                    ilep += 1
-                    Leptons.remove(lep)
-                    break
-            if not isLep:
-                ipf += 1
-
-'''

@@ -1,10 +1,11 @@
 """
-convertNanoToHDF5.py
-
-Usage: python convertNanoToHDF5.py [-h] -i <file> -o <file> [-n <num>] [--data]
-
-This script converts PFNano NanoAOD files to HDF5 files to be used in training
-DeepMETv1.
+Gets DeepMETv1 training inputs from PFNano NanoAOD file and saves them to HDF5
+output.
+Usage:
+    python convertNanoToHDF5.py -i/--input <file.root> -o/--output <file.h5>
+                                [-p/--npf <num>] [--auto_npf]
+Help:
+    python convertNanoToHDF5.py -h/--help
 """
 import sys
 import warnings
@@ -19,6 +20,8 @@ def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('-i', '--input', help='Input NanoAOD file', metavar='<file>', required=True, type=str)
     parser.add_argument('-o', '--output', help='Output HDF5 file', metavar='<file>', required=True, type=str)
+    parser.add_argument('-p', '--npf', help='Max number of PF candidates per event. Default is 4500', metavar='<num>', default=4500, type=int)
+    parser.add_argument('--auto_npf', help='Determine npf based on input events max npf. Overrides -p/--npf', action='store_true')
     return parser.parse_args()
 
 def delta_phi(obj1, obj2):
@@ -31,83 +34,97 @@ def delta_r(obj1, obj2):
     dphi = delta_phi(obj1, obj2)
     return np.hypot(deta, dphi)
 
-def input_field(n_obj, field, value=0):
-    """
-    Converts field from a ragged array to a regular array to be saved as input
-    for training.
-    """
-    return ak.fill_none(ak.pad_none(field, n_obj, clip=True), max_entries)
+def remove_match(pfcands, lepton, r_max=0.001):
+    """Remove deltaR matched lepton from pfcand list"""
+    dr = delta_r(pfcands, lepton)
+    ipf = ak.local_index(dr)
+    imin = ak.argmin(dr, axis=-1)
+    # Match lepton to closest pfcand inside r_max cone
+    is_match = (ipf == imin) & (dr < r_max)
+    return pfcands[np.invert(is_match)]
 
 def main():
     args = get_args()
+    # Paramters
+    n_lep = 2                       # num leptons matched/removed from pfcands
+    pad_value = 0                   # padding for empty training data
+    output_fields = ['px', 'py']    # GenMET quantities saved as outputs
+    input_fields = [                # PFCands quantities saved as inputs
+        'd0',
+        'dz',
+        'eta',
+        'mass',
+        'pt',
+        'puppiWeight',
+        'px',
+        'py',
+        'pdgId',
+        'charge',
+        #'fromPV',
+    ]
+
     print('Fetching events')
     events = NanoEventsFactory.from_root(
         args.input,
         schemaclass=NanoAODSchema
     ).events()
     print('Num events before selection:', len(events))
-    n_leptons = ak.num(events.Muon) + ak.num(events.Electron)
-    events = events[n_leptons >= 2]
+    n_lep_all = ak.num(events.Muon) + ak.num(events.Electron)
+    events = events[n_lep_all >= n_lep]
     print('Num events after selection: ', len(events))
 
-    # Get pf cands and the two leading leptons
+    # Get pf cands and leading leptons
     pfcands = events.PFCands
     leptons = ak.concatenate([events.Muon, events.Electron], axis=1)
     leptons = leptons[ak.argsort(leptons.pt, axis=-1, ascending=False)]
-    leptons = leptons[:,:2]
+    leptons = leptons[:,:n_lep]
 
-    # Compute delta R between each PF candidate and each lepton
-    pf, lep = ak.unzip(ak.cartesian([pfcands, leptons], nested=True))
-    dr = delta_r(pf, lep)
+    for ilep in range(n_lep):
+        print(f'DeltaR matching lepton {ilep+1}')
+        pfcands = remove_match(pfcands, leptons[:,ilep])
 
-    # Get PF candidates that are closest to a lepton (one per lepton)
-    ipf = ak.local_index(pf, axis=1)
-    ipf_closest = ak.argmin(dr, axis=1)
-    ipf, ipf_closest = ak.unzip(ak.cartesian([ipf, ipf_closest], nested=True))
-    is_closest = ak.any(ipf==ipf_closest, axis=2)
-    # Cut on min delta R
-    in_cone = (ak.min(dr, axis=2) < 0.001)
+    print('Computing PFCands_px')
+    pfcands['px'] = pfcands.pt * np.cos(pfcands.phi)
+    print('Computing PFCands_py')
+    pfcands['py'] = pfcands.pt * np.cos(pfcands.phi)
 
-    # Remove closest lepton match from PF candidates
-    pfcands = pfcands[np.invert(is_closest & in_cone)]
+    print('Preparing training input data:')
+    training_inputs = []
+    fields = ak.unzip(pfcands[input_fields])
+    npf = args.npf if not args.auto_npf else ak.max(ak.num(pfcands))
+    for i,field in enumerate(fields):
+        print(f'Processing PFCands_{input_fields[i]}')
+        field = ak.pad_none(field, npf, axis=-1, clip=True)
+        field = ak.fill_none(field, pad_value)
+        training_inputs.append(field)
 
+    # Training input format: training_inputs[ifield][ievt][ipf]
+    training_inputs = np.array(training_inputs)
+
+    print(np.shape(training_inputs))
     sys.exit('DEBUG')
 
-    #max_npf = ak.max(ak.num(pfcands))  # Value used in DeepMETv2 inputs
-    max_npf = 4500                      # Value used in DeepMETv1 Run2 training
+    #print('Saving training outputs')
+    #genMET_outputs = ak.concatenate([
+    #   [events.GenMET.pt * np.cos(events.GenMET.phi)]       # px
+    #   [events.GenMET.pt * np.sin(events.GenMET.phi)]       # py
+    #], axis=1)
 
-    # inputs: d0, dz, eta, mass, pt, puppi, px, py, pdgId, charge, fromPV
-    training_inputs = ak.concatenate([
-        [input_field(max_npf, pfcands.d0)],
-        [input_field(max_npf, pfcands.dz)],
-        [input_field(max_npf, pfcands.eta)],
-        [input_field(max_npf, pfcands.mass)],
-        [input_field(max_npf, pfcands.pt)],
-        [input_field(max_npf, pfcands.puppiWeight)],
-        [input_field(max_npf, pfcands.pt * np.cos(pfcands.phi))],
-        [input_field(max_npf, pfcands.pt * np.sin(pfcands.phi))],
-        [input_field(max_npf, pfcands.pdgId)],
-        [input_field(max_npf, pfcands.charge)],
-        [input_field(max_npf, pfcands.fromPV)],
-    ])
-
-    '''
-    # Dictionaries to assign labels to discrete values
-    d_encoding = {
-       b'PFCands_charge':{-1.0: 0, 0.0: 1, 1.0: 2},
-       b'PFCands_pdgId':{-211.0: 0, -13.0: 1, -11.0: 2, 0.0: 3, 1.0: 4, 2.0: 5, 11.0: 6, 13.0: 7, 22.0: 8, 130.0: 9, 211.0: 10},
-    }
-
-        # truth info
-        Y[e][0] += tree['GenMET_pt'][e] * np.cos(tree['GenMET_phi'][e])
-        Y[e][1] += tree['GenMET_pt'][e] * np.sin(tree['GenMET_phi'][e])
-
-    with h5py.File(args.output, 'w') as h5f:
-        h5f.create_dataset('X',    data=X,    compression='lzf')
-        h5f.create_dataset('Y',    data=Y,    compression='lzf')
-        h5f.create_dataset('EVT',  data=EVT,  compression='lzf')
-        h5f.create_dataset('XLep', data=XLep, compression='lzf')
-    '''
+#    # Dictionaries to assign labels to discrete values
+#    d_encoding = {
+#       b'PFCands_charge':{-1.0: 0, 0.0: 1, 1.0: 2},
+#       b'PFCands_pdgId':{-211.0: 0, -13.0: 1, -11.0: 2, 0.0: 3, 1.0: 4, 2.0: 5, 11.0: 6, 13.0: 7, 22.0: 8, 130.0: 9, 211.0: 10},
+#    }
+#
+#        # truth info
+#        Y[e][0] += tree['GenMET_pt'][e] * np.cos(tree['GenMET_phi'][e])
+#        Y[e][1] += tree['GenMET_pt'][e] * np.sin(tree['GenMET_phi'][e])
+#
+#    with h5py.File(args.output, 'w') as h5f:
+#        h5f.create_dataset('X',    data=X,    compression='lzf')
+#        h5f.create_dataset('Y',    data=Y,    compression='lzf')
+#        h5f.create_dataset('EVT',  data=EVT,  compression='lzf')
+#        h5f.create_dataset('XLep', data=XLep, compression='lzf')
 
 if __name__ == '__main__':
     try:

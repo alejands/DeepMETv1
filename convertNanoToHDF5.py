@@ -1,9 +1,12 @@
 """
-Gets DeepMETv1 training data from PFNano NanoAOD file and saves them to HDF5 output.
+Gets DeepMETv1 training data from PFNano NanoAOD file and saves them to HDF5
+output.
 
 Help Message
 ------------
-usage: convertNanoToHDF5.py [-h] [-v] [-l <leptons>] [-p <npf>] [--auto_npf] [-f <fill>] <inputfile> <outputfile>
+usage: convertNanoToHDF5.py [-h] [-v] [-l <leptons>] [-p <npf>]
+                            [--auto_npf] [-f <fill>]
+                            <inputfile> <outputfile>
 
 positional arguments:
   <inputfile>           input NanoAOD file.
@@ -13,12 +16,15 @@ options:
   -h, --help            show this help message and exit
   -v, --verbose         print logs
   -l <leptons>, --leptons <leptons>
-                        number of leptons to remove from pfcands (default is 2)
+                        number of leptons to remove from pfcands (default
+                        is 2)
   -p <npf>, --npf <npf>
                         max number of pfcands per event (default is 4500)
-  --auto_npf            determine npf based on input events max npf (overrides -p/--npf)
+  --auto_npf            determine npf based on input events max npf
+                        (overrides -p/--npf)
   -f <fill>, --fill <fill>
-                        value used to pad and fill empty training data entries (default is -999)
+                        value used to pad and fill empty training data
+                        entries (default is -999)
 """
 # Native libraries
 import sys

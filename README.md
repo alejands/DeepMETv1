@@ -1,16 +1,17 @@
-## Some code used in DeepMET trainings
-(Code Taken from Jan Steggemann and Markus Seidel)
+## DeepMETv1
 
-First install the necessary packages with [MiniConda](https://docs.conda.io/en/latest/miniconda.html)
+DeepMETv1 is a fully-connected neural network (FCNN) for MET reconstruction in CMS data. This branch is focused on training on Run3 conditions.
+
+The [original repository](https://github.com/yongbinfeng/DeepMETTraining) by [Yongbing Feng](https://github.com/yongbinfeng) was used to train DeepMETv1 on Run2 conditions. A copy of this original code is in the branch [Run2](https://github.com/DeepMETv2/DeepMETv1/tree/Run2).
+
+---
+
+Install the necessary packages with [MiniConda](https://docs.conda.io/en/latest/miniconda.html). You can use the provided `deepmetv1_env.yml` file.
+conda env create -y -f deepmetv1_env.yml
 ```
-conda create -n METTraining python=3.7
-conda install -n METTraining numpy h5py
-conda install -n METTraining progressbar2
-conda install -n METTraining uproot
-conda install -n METTraining matplotlib pandas scikit-learn
-conda install -n METTraining tensorflow-gpu=1.13.1 keras=2.2.4
-```
-and activate the environment
+
+Activate the environment
+
 ```
 conda activate METTraining
 ```

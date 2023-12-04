@@ -41,20 +41,28 @@ from coffea.nanoevents.schemas import NanoAODSchema
 def get_args():
     """Get command line arguments"""
     parser = argparse.ArgumentParser()
-    parser.add_argument('inputfile', metavar='<inputfile>', type=str,
+    parser.add_argument('inputfile',
+        metavar='<inputfile>', type=str,
         help='input NanoAOD file.')
-    parser.add_argument('outputfile', metavar='<outputfile>', type=str,
+    parser.add_argument('outputfile',
+        metavar='<outputfile>', type=str,
         help='output HDF5 file')
-    parser.add_argument('-v', '--verbose', action='store_true',
-        help='print logs')
-    parser.add_argument('-l', '--leptons', metavar='<leptons>', type=int, default=2,
+    parser.add_argument('-v', '--verbose',
+        action='store_true',
+        help='show logs')
+    parser.add_argument('-l', '--leptons',
+        metavar='<leptons>', type=int, default=2,
         help='number of leptons to remove from pfcands (default is 2)')
-    parser.add_argument('-p', '--npf', metavar='<npf>', type=int, default=4500,
+    parser.add_argument('-p', '--npf',
+        metavar='<npf>', type=int, default=4500,
         help='max number of pfcands per event (default is 4500)')
     parser.add_argument('--auto_npf', action='store_true',
-        help='determine npf based on input events max npf (overrides -p/--npf)')
-    parser.add_argument('-f', '--fill', metavar='<fill>', type=float, default=-999,
-        help='value used to pad and fill empty training data entries (default is -999)')
+        help='determine npf based on input events max npf '
+             '(overrides -p/--npf)')
+    parser.add_argument('-f', '--fill',
+        metavar='<fill>', type=float, default=-999,
+        help='value used to pad and fill empty training data entries '
+             '(default is -999)')
     return parser.parse_args()
 
 def delta_phi(obj1, obj2):
@@ -181,8 +189,8 @@ def main():
         h5f.create_dataset('X', data=X, compression='lzf')
         h5f.create_dataset('Y', data=Y, compression='lzf')
 
-    logging.info(f'Training inputs shape:  {np.shape(X)}')  # (nfields,nevents,npf)
-    logging.info(f'Training outputs shape: {np.shape(Y)}')  # (nfields,nevents)
+    logging.info(f'Inputs shape:  {np.shape(X)}')   # (nfields,nevents,npf)
+    logging.info(f'Outputs shape: {np.shape(Y)}')   # (nfields,nevents)
     logging.info(f'Training data saved to {args.outputfile}')
 
 if __name__ == '__main__':

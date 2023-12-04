@@ -8,7 +8,6 @@ The [original repository](https://github.com/yongbinfeng/DeepMETTraining) by [Yo
 
 Install the necessary packages with [MiniConda](https://docs.conda.io/en/latest/miniconda.html). You can use the provided `deepmetv1_env.yml` file.
 conda env create -y -f deepmetv1_env.yml
-```
 
 Activate the environment
 
@@ -16,10 +15,21 @@ Activate the environment
 conda activate METTraining
 ```
 
-Prepare the `h5` training files
+---
+
+Prepare the HDF5 training files (to see log info, add option `-v`)
+
 ```
-python convertNanoToHDF5.py -i /eos/cms/store/user/yofeng/WRecoilNanoAOD_Skimmed_v10_tempMET_TTJets/myNanoProdMc2016_NANO_2_Skim.root -o /eos/cms/store/user/yofeng/DeepMETTrainingFile/myNanoProdMc2016_NANO_ttbar_2_Skim.h5
+python convertNanoToHDF5.py inputfile.root outputfile.h5
 ```
+
+To see more options
+
+```
+python convertNanoToHDF5.py --help
+```
+
+---
 
 Run the training
 ```

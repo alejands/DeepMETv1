@@ -1,13 +1,13 @@
 name: DeepMETv1
 channels:
   - conda-forge
+# To download specific versions, uncomment and remove whitespace
 dependencies:
-  - numpy
-  - h5py
-  - progressbar2
-  - coffea
-  - matplotlib
-  - pandas
-  - scikit-learn
-  - tensorflow-gpu
-  - keras
+  - numpy           #=1.26.2=py311h64a7726_0
+  - h5py            #=3.10.0=nompi_py311h3839ddf_100
+  - coffea=0.7.22   #=pyhd8ed1ab_0
+  - matplotlib      #=3.8.2=py311h38be061_0
+  - pandas          #=2.1.3=py311h320fe9a_0
+  - scikit-learn    #=1.3.2=py311hc009520_1
+  - tensorflow-gpui #=2.14.0=cuda118py311h0240f8b_0
+  - kerasi          #=2.14.0=pyhd8ed1ab_0

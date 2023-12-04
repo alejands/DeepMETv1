@@ -1,8 +1,8 @@
 name: DeepMETv1
 channels:
   - conda-forge
-# To download specific versions, uncomment and remove whitespace
 dependencies:
+# To download specific versions, uncomment and remove whitespace
   - numpy           #=1.26.2=py311h64a7726_0
   - h5py            #=3.10.0=nompi_py311h3839ddf_100
   - coffea=0.7.22   #=pyhd8ed1ab_0

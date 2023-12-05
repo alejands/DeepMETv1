@@ -36,7 +36,7 @@ import numpy as np
 import awkward as ak
 import h5py
 from coffea.nanoevents import NanoEventsFactory
-from coffea.nanoevents.schemas import NanoAODSchema
+from coffea.nanoevents.schemas import PFNanoAODSchema
 
 def get_args():
     """Get command line arguments"""
@@ -65,42 +65,33 @@ def get_args():
              '(default is -999)')
     return parser.parse_args()
 
-def delta_phi(obj1, obj2):
-    """Returns deltaPhi between two objects in range [-pi,pi)"""
-    return (obj1.phi - obj2.phi + np.pi) % (2*np.pi) - np.pi
+class LoggingFormatter(logging.Formatter):
+    """Log formatting customizations"""
 
-def delta_r(obj1, obj2):
-    """Returns deltaR between two objects"""
-    deta = obj1.eta - obj2.eta
-    dphi = delta_phi(obj1, obj2)
-    return np.hypot(deta, dphi)
-
-def px(obj):
-    """Returns object px"""
-    return obj.pt * np.cos(obj.phi)
-
-def py(obj):
-    """Returns object py"""
-    return obj.pt * np.sin(obj.phi)
+    def format(self, record):
+        """Convert relativeCreated from milliseconds to seconds"""
+        record.relativeCreated = record.relativeCreated / 1000
+        return super().format(record)
 
 def remove_lepton(pfcands, lepton, r_max=0.001):
     """
     Remove deltaR matched lepton from pfcands. A lepton is matched to the
     nearest pfcand if they are closer than a deltaR of r_max.
     """
-    dr = delta_r(pfcands, lepton)
+    dr = pfcands.delta_r(lepton)
     ipf = ak.local_index(dr)
-    imin = ak.argmin(dr, axis=-1)
-    is_match = (ipf == imin) & (dr < r_max)
-    return pfcands[np.invert(is_match)]
+    imin = ak.argmin(dr, axis=-1, mask_identity=False)
+    match = (ipf == imin) & (dr < r_max)
+    return pfcands[~match]
 
-def main():
-    """main"""
+def main(args):
+    """main program"""
     # Suppress irrelevant warnings from coffea. Warnings have to do with
     # the naming convention of some branches not relevant to DeepMET.
     # The offending branches are 'Jet_*' and 'FatJet_*'.
     warnings.filterwarnings('ignore', message='Found duplicate branch .*Jet_')
 
+    # PFCands and GenMET fields, respectively, to be saved in HDF5 file
     input_fields = [
         'd0',
         'dz',
@@ -115,6 +106,7 @@ def main():
         #'fromPV'
     ]
     output_fields = ['px', 'py']
+
     # Labels for fields with discrete values
     labels = {
        'charge':{  -1.0: 0,   0.0: 1,   1.0: 2},
@@ -122,19 +114,19 @@ def main():
                    11.0: 6,  13.0: 7,  22.0: 8, 130.0: 9, 211.0:10},
        'fromPV':{   0.0: 0,   1.0: 1,   2.0: 2,   3.0: 3}
     }
-    args = get_args()
 
+    # Configure logging if enabled
     if args.verbose:
-        logging.basicConfig(
-            format='[%(asctime)s] %(levelname)s: %(message)s',
-            level=logging.INFO
-        )
+        logging.basicConfig(level=logging.INFO)
+        formatter = LoggingFormatter(
+            '[%(relativeCreated)03ds] %(levelname)s: %(message)s')
+        logging.root.handlers[0].setFormatter(formatter)
 
-    # Getting events from NanoAOD
+    # Get events from NanoAOD
     logging.info('Fetching events')
     events = NanoEventsFactory.from_root(
         args.inputfile,
-        schemaclass=NanoAODSchema
+        schemaclass=PFNanoAODSchema
     ).events()
 
     # Event selection
@@ -143,7 +135,7 @@ def main():
     events = events[n_lep >= args.leptons]
     logging.info(f'Num events after selection:  {len(events)}')
 
-    # Getting training data collections and leading leptons
+    # Get training data collections and leading leptons
     pfcands = events.PFCands
     genMET = events.GenMET
     leptons = ak.concatenate([events.Muon, events.Electron], axis=1)
@@ -154,37 +146,39 @@ def main():
     logging.info('Removing leading leptons from pfcand list')
     for ilep in range(args.leptons):
         pfcands = remove_lepton(pfcands, leptons[:,ilep])
+    logging.info('Lepton matching completed')
 
-    # Computing additional quantites
-    logging.info('Computing px and py')
-    pfcands['px'] = px(pfcands)
-    pfcands['py'] = py(pfcands)
-    genMET['px'] = px(genMET)
-    genMET['py'] = py(genMET)
+    # px and py are not computed or saved until they are initialized
+    logging.info('Computing additional quantities')
+    pfcands['px'] = pfcands.px
+    pfcands['py'] = pfcands.py
+    genMET['px'] = genMET.px
+    genMET['py'] = genMET.py
+    logging.info(f'Additional computations completed')
 
-    # Training inputs
+    # Format training data
     logging.info('Preparing training inputs')
     pfcands_fields = []
-    fields = ak.unzip(pfcands[input_fields])
     npf = ak.max(ak.num(pfcands)) if args.auto_npf else args.npf
 
-    for field_name, field in zip(input_fields, fields):
+    for field_name in input_fields:
         logging.info(f'Processing PFCands_{field_name}')
+        field = pfcands[field_name]
         if field_name in list(labels):
             pass # todo: conversion to labels
         field = ak.pad_none(field, npf, axis=-1, clip=True)
         field = ak.fill_none(field, args.fill)
         pfcands_fields.append(field)
 
-    # Training outputs
     logging.info('Preparing training outputs')
     genMET_fields = ak.unzip(genMET[output_fields])
 
-    # Saving data to file
+    # Save data to file
     logging.info('Converting to numpy arrays')
     X = np.array(pfcands_fields)
     Y = np.array(genMET_fields)
 
+    logging.info('Saving to HDF5 file')
     with h5py.File(args.outputfile, 'w') as h5f:
         h5f.create_dataset('X', data=X, compression='lzf')
         h5f.create_dataset('Y', data=Y, compression='lzf')
@@ -195,6 +189,7 @@ def main():
 
 if __name__ == '__main__':
     try:
-        main()
+        args = get_args()
+        main(args)
     except KeyboardInterrupt:
         sys.exit('\nStopping early.')

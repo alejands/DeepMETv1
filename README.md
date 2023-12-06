@@ -6,8 +6,11 @@ The [original repository](https://github.com/yongbinfeng/DeepMETTraining) by [Yo
 
 ---
 
-Install the necessary packages with [MiniConda](https://docs.conda.io/en/latest/miniconda.html). You can use the provided `deepmetv1_env.yml` file.
-conda env create -y -f deepmetv1_env.yml
+Install the necessary packages with [MiniConda](https://docs.conda.io/en/latest/miniconda.html). You can use the provided `env_deepmetv1.yml` file.
+
+```
+conda env create -y -f env_deepmetv1.yml
+```
 
 Activate the environment
 

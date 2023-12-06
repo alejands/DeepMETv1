@@ -1,49 +1,49 @@
 """
-Gets DeepMETv1 training data from PFNano NanoAOD file and saves them to HDF5
+Gets DeepMETv1 training data from a PFNano NanoAOD file and saves them to HDF5
 output.
-
-Help Message
-------------
-usage: convertNanoToHDF5.py [-h] [-v] [-l <leptons>] [-p <npf>]
-                            [--auto_npf] [-f <fill>]
-                            <inputfile> <outputfile>
-
-positional arguments:
-  <inputfile>           input NanoAOD file.
-  <outputfile>          output HDF5 file
-
-options:
-  -h, --help            show this help message and exit
-  -v, --verbose         print logs
-  -l <leptons>, --leptons <leptons>
-                        number of leptons to remove from pfcands (default
-                        is 2)
-  -p <npf>, --npf <npf>
-                        max number of pfcands per event (default is 4500)
-  --auto_npf            determine npf based on input events max npf
-                        (overrides -p/--npf)
-  -f <fill>, --fill <fill>
-                        value used to pad and fill empty training data
-                        entries (default is -999)
 """
+# Help Message
+# ------------
+# usage: convertNanoToHDF5.py [-h] [-v] [-l <leptons>] [-p <npf>]
+#                             [--auto_npf] [-f <fill>]
+#                             <inputfile> <outputfile>
+# 
+# positional arguments:
+#   <inputfile>           input NanoAOD file.
+#   <outputfile>          output HDF5 file
+# 
+# options:
+#   -h, --help            show this help message and exit
+#   -v, --verbose         print logs
+#   -l <leptons>, --leptons <leptons>
+#                         number of leptons to remove from pfcands (default
+#                         is 2)
+#   -p <npf>, --npf <npf>
+#                         max number of pfcands per event (default is 4500)
+#   --auto_npf            determine npf based on input events max npf
+#                         (overrides -p/--npf)
+#   -f <fill>, --fill <fill>
+#                         value used to pad and fill empty training data
+#                         entries (default is -999)
 import sys
 import logging
 import warnings
 import argparse
-
 import numpy as np
 import awkward as ak
 import h5py
 from coffea.nanoevents import NanoEventsFactory
 from coffea.nanoevents.schemas import PFNanoAODSchema
 
-logger = logging.getLogger('convertNanoToHDF5')
+logger = logging.getLogger(__name__)
 logger.setLevel(logging.WARNING)
 handler = logging.StreamHandler()
 handler.setLevel(logging.INFO)
 formatter = logging.Formatter('[%(asctime)s] %(message)s')
 handler.setFormatter(formatter)
 logger.addHandler(handler)
+
+### Parameters ###
 
 # PFCands and GenMET fields, respectively, to be saved in HDF5 file
 input_fields = [
@@ -69,31 +69,25 @@ labels = {
    'fromPV':{   0.0: 0,   1.0: 1,   2.0: 2,   3.0: 3}
 }
 
+auto_npf = False    # If true, overwrites npf_max at runtime
+npf_max = 4500      # Number of PFCands entries in output file;
+                    # empty values are padded
+fill = -999         # Padding value used to fill empty PFCands entries
+
+### Functions ###
+
 def get_args():
     """Get command line arguments"""
     parser = argparse.ArgumentParser()
-    parser.add_argument('inputfile',
-        metavar='<inputfile>', type=str,
+    parser.add_argument('inputfile', metavar='<inputfile>', type=str,
         help='input NanoAOD file.')
-    parser.add_argument('outputfile',
-        metavar='<outputfile>', type=str,
+    parser.add_argument('outputfile', metavar='<outputfile>', type=str,
         help='output HDF5 file')
-    parser.add_argument('-v', '--verbose',
-        action='store_true',
+    parser.add_argument('-v', '--verbose', action='store_true',
         help='show logs')
     parser.add_argument('-l', '--leptons',
         metavar='<leptons>', type=int, default=2,
         help='number of leptons to remove from pfcands (default is 2)')
-    parser.add_argument('-p', '--npf',
-        metavar='<npf>', type=int, default=4500,
-        help='max number of pfcands per event (default is 4500)')
-    parser.add_argument('--auto_npf', action='store_true',
-        help='determine npf based on input events max npf '
-             '(overrides -p/--npf)')
-    parser.add_argument('-f', '--fill',
-        metavar='<fill>', type=float, default=-999,
-        help='value used to pad and fill empty training data entries '
-             '(default is -999)')
     return parser.parse_args()
 
 def remove_lepton(pfcands, lepton, r_max=0.001):
@@ -107,16 +101,16 @@ def remove_lepton(pfcands, lepton, r_max=0.001):
     match = (ipf == imin) & (dr < r_max)
     return pfcands[~match]
 
+### Main program ###
+
 def convert(args):
     """Get training data from a NanoAOD and save it to an HDF5 file"""
-    # Suppress irrelevant warnings from coffea. Warnings have to do with
-    # the naming convention of some branches not relevant to DeepMET.
-    # The offending branches are 'Jet_*' and 'FatJet_*'.
-    warnings.filterwarnings('ignore', message='Found duplicate branch .*Jet_')
-
     # Configure logger if enabled
     if args.verbose:
         logger.setLevel(level=logging.INFO)
+
+    # Supress warnings about names of unused branches from coffea
+    warnings.filterwarnings('ignore', message='Found duplicate branch .*Jet_')
 
     # Get events from NanoAOD
     logger.info('Fetching events')

@@ -1,4 +1,4 @@
-name: DeepMETv1
+name: DeepMETenv
 channels:
   - conda-forge
 dependencies:
